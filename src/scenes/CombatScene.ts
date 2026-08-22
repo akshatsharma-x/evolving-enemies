@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Player } from '../entities/Player';
 import { Enemy } from '../entities/Enemy';
 import { HealthBar } from '../ui/HealthBar';
+import { TelemetryRecorder } from '../telemetry/TelemetryRecorder';
 
 export class CombatScene extends Phaser.Scene {
     private player!: Player;
@@ -13,12 +14,18 @@ export class CombatScene extends Phaser.Scene {
     private gameOverText!: Phaser.GameObjects.Text;
     private restartButton!: Phaser.GameObjects.Text;
 
+    // A fresh recorder is created on every scene restart — scoped to one round.
+    private telemetry!: TelemetryRecorder;
+
     constructor() {
         super({ key: 'CombatScene' });
     }
 
     create() {
         this.gameOver = false;
+
+        // New recorder for this round, seeded with the current clock time
+        this.telemetry = new TelemetryRecorder(this.time.now);
         
         const ground = this.add.rectangle(400, 550, 800, 100, 0x333333);
         this.physics.add.existing(ground, true);
@@ -27,6 +34,7 @@ export class CombatScene extends Phaser.Scene {
         this.enemy = new Enemy(this, 600, 400);
         
         this.player.setTarget(this.enemy);
+        this.player.setTelemetry(this.telemetry); // inject recorder
         this.enemy.setTarget(this.player);
         
         this.physics.add.collider(this.player, ground);
@@ -43,13 +51,17 @@ export class CombatScene extends Phaser.Scene {
         this.add.text(580, 45, 'Enemy (AI)', { color: '#ffffff' });
         
         this.gameOverText = this.add.text(400, 200, 'ROUND OVER', { fontSize: '48px', color: '#ffffff' }).setOrigin(0.5).setVisible(false);
-        this.restartButton = this.add.text(400, 300, 'Restart', { fontSize: '32px', color: '#00ff00', backgroundColor: '#333333', padding: { x: 10, y: 5 } })
+        this.restartButton = this.add
+            .text(400, 300, 'Restart', {
+                fontSize: '32px',
+                color: '#00ff00',
+                backgroundColor: '#333333',
+                padding: { x: 10, y: 5 },
+            })
             .setOrigin(0.5)
             .setVisible(false)
             .setInteractive({ useHandCursor: true })
-            .on('pointerdown', () => {
-                this.scene.restart();
-            });
+            .on('pointerdown', () => { this.scene.restart(); });
     }
 
     private handleHit(hitbox: Phaser.Types.Physics.Arcade.ImageWithDynamicBody, target: any) {
@@ -72,6 +84,14 @@ export class CombatScene extends Phaser.Scene {
         
         if (this.player.hp <= 0 || this.enemy.hp <= 0) {
             this.gameOver = true;
+
+            const outcome = this.enemy.hp <= 0 ? 'player_win' : 'player_loss';
+
+            // endRound() is void — the POST runs async in the background,
+            // never blocking the restart button.
+            this.telemetry.endRound(outcome);
+
+            this.gameOverText.setText(`ROUND OVER — ${outcome === 'player_win' ? 'YOU WIN!' : 'YOU LOSE'}`);
             this.gameOverText.setVisible(true);
             this.restartButton.setVisible(true);
         }
